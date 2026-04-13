@@ -13,6 +13,10 @@
   <a href="https://docs.kan.bn">Docs</a>
   ·
   <a href="https://discord.gg/e6ejRb6CmT">Discord</a>
+  ·
+  <a href="./SETUP_MARKETING_TEAM.md">📖 Marketing Setup ($0)</a>
+  ·
+  <a href="./VERCEL_DEPLOYMENT.md">🚀 Deploy Guide</a>
 </p>
 
 <div align="center">

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased](https://github.com/kanbn/kan/compare/v0.2.4...HEAD)
 
+### Added (Marketing Team Setup - April 2026)
+
+- Supabase PostgreSQL integration with zero-cost database setup
+- Email/password authentication enabled for self-hosted instances
+- Environment variable validation for critical auth configs
+- Marketing team deployment guide with Vercel free tier setup
+- Complete setup documentation for cost-zero team collaboration
+
+### Changed
+
+- Fixed Pages Router compatibility issues in `_app.tsx`
+- Disabled docs app in development to focus on core web app
+- Updated Next.js configuration for stability
+
+### Fixed
+
+- Authentication initialization with 32+ character BETTER_AUTH_SECRET
+- Next.js dev server compatibility with Pages Router pattern
+- Environment variable schema validation for production readiness
+
 ## [0.2.4](https://github.com/kanbn/kan/compare/v0.2.3...v0.2.4) - 2025-01-14
 
 ### Added
