@@ -46,63 +46,86 @@ export interface User {
   stripeCustomerId?: string | null | undefined;
 }
 
-// Create Supabase client for server-side auth
-const createSupabaseClient = () => {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  
-  return createClient(supabaseUrl, supabaseServiceKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+// Parse cookies from header string
+const parseCookies = (cookieHeader: string | null): Record<string, string> => {
+  if (!cookieHeader) return {};
+  return cookieHeader.split(";").reduce((acc, cookie) => {
+    const [key, ...valueParts] = cookie.trim().split("=");
+    const value = valueParts.join("=");
+    if (key && value) acc[key] = value;
+    return acc;
+  }, {} as Record<string, string>);
 };
 
-// Get session from authorization header
+// Get session from cookies - parse Supabase auth cookies and validate token
 const getSessionFromHeaders = async (headers: Headers): Promise<{ user: User } | null> => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
   
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  
-  // Try to get token from authorization header
-  const authHeader = headers.get("authorization");
-  const cookieHeader = headers.get("cookie");
-  
-  let token: string | null = null;
-  
-  if (authHeader?.startsWith("Bearer ")) {
-    token = authHeader.slice(7);
-  } else if (cookieHeader) {
-    // Parse supabase auth token from cookies
-    const cookies = cookieHeader.split(";").reduce((acc, cookie) => {
-      const [key, value] = cookie.trim().split("=");
-      if (key && value) acc[key] = value;
-      return acc;
-    }, {} as Record<string, string>);
-    
-    // Supabase stores tokens in sb-<project-ref>-auth-token cookie
-    const authCookie = Object.entries(cookies).find(([key]) => 
-      key.includes("-auth-token")
-    );
-    if (authCookie) {
-      try {
-        const parsed = JSON.parse(decodeURIComponent(authCookie[1]));
-        token = parsed.access_token;
-      } catch {
-        // Cookie parsing failed
-      }
-    }
-  }
-
-  if (!token) {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    log.warn("Supabase URL or Anon Key not configured");
     return null;
   }
-
-  const { data: { user }, error } = await supabase.auth.getUser(token);
+  
+  const cookieHeader = headers.get("cookie");
+  const cookies = parseCookies(cookieHeader);
+  
+  // Find the Supabase auth cookie - it's named sb-<project-ref>-auth-token
+  // and can be split across multiple chunks (sb-<ref>-auth-token.0, .1, etc.)
+  const authCookieEntries = Object.entries(cookies).filter(([key]) => 
+    key.includes("-auth-token")
+  ).sort(([a], [b]) => a.localeCompare(b));
+  
+  if (authCookieEntries.length === 0) {
+    return null;
+  }
+  
+  // Combine all auth cookie chunks
+  let tokenData: string;
+  if (authCookieEntries.length === 1 && !authCookieEntries[0]![0].includes(".")) {
+    // Single cookie, not chunked
+    tokenData = authCookieEntries[0]![1];
+  } else {
+    // Multiple chunks, combine them
+    tokenData = authCookieEntries.map(([, v]) => v).join("");
+  }
+  
+  // Try to decode and parse the token
+  let accessToken: string | null = null;
+  try {
+    // URL decode first
+    const decoded = decodeURIComponent(tokenData);
+    
+    // Try base64 decode if it looks like base64
+    let jsonStr = decoded;
+    if (decoded.match(/^[A-Za-z0-9+/=]+$/)) {
+      try {
+        jsonStr = Buffer.from(decoded, "base64").toString("utf-8");
+      } catch {
+        // Not base64, use as-is
+      }
+    }
+    
+    // Parse as JSON
+    const parsed = JSON.parse(jsonStr);
+    accessToken = parsed.access_token || parsed[0]?.access_token;
+  } catch {
+    // Failed to parse - might be a different format
+    return null;
+  }
+  
+  if (!accessToken) {
+    return null;
+  }
+  
+  // Create Supabase client and validate the token
+  const supabase = createClient(supabaseUrl, supabaseAnonKey);
+  const { data: { user }, error } = await supabase.auth.getUser(accessToken);
 
   if (error || !user) {
+    if (error && !error.message.includes("session")) {
+      log.debug({ err: error }, "Supabase auth error");
+    }
     return null;
   }
 

@@ -2,6 +2,10 @@ import { createClient } from "@supabase/supabase-js";
 
 import { useSession } from "./hooks";
 
+// Use globalThis.window for browser detection
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const isBrowser = typeof globalThis !== "undefined" && typeof (globalThis as any).window !== "undefined";
+
 // Get environment variables - these will be available at runtime
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -88,8 +92,9 @@ export const authClient = {
           return { error };
         }
 
-        if (data.callbackURL) {
-          window.location.href = data.callbackURL;
+        if (data.callbackURL && isBrowser) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (globalThis as any).window.location.href = data.callbackURL;
         }
 
         options?.onSuccess?.();

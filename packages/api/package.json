@@ -55,6 +55,7 @@
     "@kan/logger": "workspace:^",
     "@kan/shared": "workspace:^",
     "@kan/stripe": "workspace:^",
+    "@supabase/supabase-js": "^2.46.2",
     "@trpc/server": "catalog:",
     "rate-limiter-flexible": "^9.0.1",
     "superjson": "2.2.1",

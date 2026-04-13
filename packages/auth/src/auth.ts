@@ -3,9 +3,10 @@ import { env } from "next-runtime-env";
 
 import type { dbClient } from "@kan/db/client";
 
-export type SupabaseAuthClient = ReturnType<typeof createClient>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type SupabaseAuthClient = any;
 
-export const initAuth = (_db: dbClient) => {
+export const initAuth = (_db: dbClient): { supabase: SupabaseAuthClient; handler: (req: Request) => Promise<Response> } => {
   const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL") || "";
   const supabaseAnonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY") || "";
 
