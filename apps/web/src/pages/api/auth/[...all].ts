@@ -1,35 +1,35 @@
-import { toNodeHandler } from "better-auth/node";
+import type { NextApiRequest, NextApiResponse } from "next";
 
-import { initAuth } from "@kan/auth/server";
-import { createDrizzleClient } from "@kan/db/client";
 import { withRateLimit } from "@kan/api/utils/rateLimit";
 
-export const config = { api: { bodyParser: false } };
+export const config = { api: { bodyParser: true } };
 
-export const auth = initAuth(createDrizzleClient());
+// Supabase handles auth directly via its own endpoints
+// This route is kept for backwards compatibility and custom auth operations
+async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { all } = req.query;
+  const path = Array.isArray(all) ? all.join("/") : all;
 
-const authHandler = toNodeHandler(auth.handler);
+  // Handle social providers endpoint for compatibility
+  if (path === "social-providers") {
+    const providers: string[] = [];
+    if (process.env.NEXT_PUBLIC_GOOGLE_ENABLED === "true") providers.push("google");
+    if (process.env.NEXT_PUBLIC_GITHUB_ENABLED === "true") providers.push("github");
+    if (process.env.NEXT_PUBLIC_DISCORD_ENABLED === "true") providers.push("discord");
+    if (process.env.NEXT_PUBLIC_APPLE_ENABLED === "true") providers.push("apple");
+    if (process.env.NEXT_PUBLIC_MICROSOFT_ENABLED === "true") providers.push("microsoft");
+    
+    return res.status(200).json(providers);
+  }
+
+  // For other auth operations, return info about Supabase
+  return res.status(200).json({
+    message: "Auth is handled by Supabase",
+    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  });
+}
 
 export default withRateLimit(
   { points: 100, duration: 60 },
-  async (req, res) => {
-    /**
-     * Better-auth behind proxies (Nginx/Cloudflare) can sometimes fail to parse the protocol
-     * if headers are incorrectly set or if there are multiple values in X-Forwarded-Proto.
-     * We sanitize these headers here to ensure better-auth gets a clean protocol and host.
-     */
-    const forwardedProto = req.headers["x-forwarded-proto"];
-    if (forwardedProto) {
-      const p = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
-      req.headers["x-forwarded-proto"] = p?.split(",")[0]?.trim();
-    }
-
-    const forwardedHost = req.headers["x-forwarded-host"];
-    if (forwardedHost) {
-      const h = Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost;
-      req.headers["host"] = h?.split(",")[0]?.trim();
-    }
-
-    return await authHandler(req, res);
-  },
+  handler,
 );

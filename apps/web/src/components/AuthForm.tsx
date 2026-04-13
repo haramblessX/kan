@@ -1,5 +1,6 @@
-import type { SocialProvider } from "better-auth/social-providers";
 import { useSearchParams } from "next/navigation";
+
+type SocialProvider = "google" | "github" | "discord" | "apple" | "microsoft" | "facebook" | "twitter" | "linkedin" | "gitlab" | "spotify" | "twitch" | "dropbox" | "tiktok" | "reddit" | "roblox" | "vk" | "kick" | "zoom";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { t } from "@lingui/core/macro";
 import { Trans } from "@lingui/react/macro";

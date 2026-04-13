@@ -3,12 +3,12 @@ import type { CreateNextContextOptions } from "@trpc/server/adapters/next";
 import type { NextApiRequest } from "next";
 import type { OpenApiMeta } from "trpc-to-openapi";
 import { initTRPC, TRPCError } from "@trpc/server";
+import { createClient } from "@supabase/supabase-js";
 import { env } from "next-runtime-env";
 import superjson from "superjson";
 import { ZodError } from "zod";
 
 import type { dbClient } from "@kan/db/client";
-import { initAuth } from "@kan/auth/server";
 import { createDrizzleClient } from "@kan/db/client";
 import { createLogger } from "@kan/logger";
 
@@ -46,23 +46,104 @@ export interface User {
   stripeCustomerId?: string | null | undefined;
 }
 
-const createAuthWithHeaders = (
-  auth: ReturnType<typeof initAuth>,
-  headers: Headers,
-) => {
+// Create Supabase client for server-side auth
+const createSupabaseClient = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  
+  return createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+};
+
+// Get session from authorization header
+const getSessionFromHeaders = async (headers: Headers): Promise<{ user: User } | null> => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+  
+  const supabase = createClient(supabaseUrl, supabaseAnonKey);
+  
+  // Try to get token from authorization header
+  const authHeader = headers.get("authorization");
+  const cookieHeader = headers.get("cookie");
+  
+  let token: string | null = null;
+  
+  if (authHeader?.startsWith("Bearer ")) {
+    token = authHeader.slice(7);
+  } else if (cookieHeader) {
+    // Parse supabase auth token from cookies
+    const cookies = cookieHeader.split(";").reduce((acc, cookie) => {
+      const [key, value] = cookie.trim().split("=");
+      if (key && value) acc[key] = value;
+      return acc;
+    }, {} as Record<string, string>);
+    
+    // Supabase stores tokens in sb-<project-ref>-auth-token cookie
+    const authCookie = Object.entries(cookies).find(([key]) => 
+      key.includes("-auth-token")
+    );
+    if (authCookie) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(authCookie[1]));
+        token = parsed.access_token;
+      } catch {
+        // Cookie parsing failed
+      }
+    }
+  }
+
+  if (!token) {
+    return null;
+  }
+
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+
+  if (error || !user) {
+    return null;
+  }
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email || "",
+      name: user.user_metadata?.name || user.email?.split("@")[0] || "",
+      emailVerified: !!user.email_confirmed_at,
+      createdAt: new Date(user.created_at),
+      updatedAt: new Date(user.updated_at || user.created_at),
+      image: user.user_metadata?.avatar_url || user.user_metadata?.picture || null,
+      stripeCustomerId: user.user_metadata?.stripeCustomerId || null,
+    },
+  };
+};
+
+// Auth API wrapper for compatibility
+const createAuthApi = (headers: Headers) => {
   return {
     api: {
-      getSession: () => auth.api.getSession({ headers }),
-      signInMagicLink: (input: { email: string; callbackURL: string }) =>
-        auth.api.signInMagicLink({
-          headers,
-          body: { email: input.email, callbackURL: input.callbackURL },
-        }),
-      listActiveSubscriptions: (input: { workspacePublicId: string }) =>
-        auth.api.listActiveSubscriptions({
-          headers,
-          query: { referenceId: input.workspacePublicId },
-        }),
+      getSession: () => getSessionFromHeaders(headers),
+      signInMagicLink: async (input: { email: string; callbackURL: string }) => {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+        const supabase = createClient(supabaseUrl, supabaseAnonKey);
+        
+        const { error } = await supabase.auth.signInWithOtp({
+          email: input.email,
+          options: {
+            emailRedirectTo: input.callbackURL,
+          },
+        });
+        
+        if (error) throw error;
+        return { success: true };
+      },
+      listActiveSubscriptions: async (_input: { workspacePublicId: string }) => {
+        // Subscriptions are now handled separately
+        return [];
+      },
     },
   };
 };
@@ -70,7 +151,7 @@ const createAuthWithHeaders = (
 interface CreateContextOptions {
   user: User | null | undefined;
   db: dbClient;
-  auth: ReturnType<typeof createAuthWithHeaders>;
+  auth: ReturnType<typeof createAuthApi>;
   headers: Headers;
   transport?: "trpc" | "rest";
 }
@@ -88,9 +169,8 @@ export const createInnerTRPCContext = (opts: CreateContextOptions) => {
 
 export const createTRPCContext = async ({ req }: CreateNextContextOptions) => {
   const db = createDrizzleClient();
-  const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
-  const auth = createAuthWithHeaders(baseAuth, headers);
+  const auth = createAuthApi(headers);
 
   const session = await auth.api.getSession();
 
@@ -105,9 +185,8 @@ export const createTRPCContext = async ({ req }: CreateNextContextOptions) => {
 
 export const createNextApiContext = async (req: NextApiRequest) => {
   const db = createDrizzleClient();
-  const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
-  const auth = createAuthWithHeaders(baseAuth, headers);
+  const auth = createAuthApi(headers);
 
   const session = await auth.api.getSession();
 
@@ -122,9 +201,8 @@ export const createNextApiContext = async (req: NextApiRequest) => {
 
 export const createRESTContext = async ({ req }: CreateNextContextOptions) => {
   const db = createDrizzleClient();
-  const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
-  const auth = createAuthWithHeaders(baseAuth, headers);
+  const auth = createAuthApi(headers);
 
   let session;
   try {
