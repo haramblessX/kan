@@ -324,7 +324,7 @@ importers:
         specifier: workspace:^
         version: link:../stripe
       '@supabase/supabase-js':
-        specifier: ^2.46.2
+        specifier: ^2.49.1
         version: 2.103.0
       '@trpc/server':
         specifier: 'catalog:'

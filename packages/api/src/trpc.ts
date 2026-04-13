@@ -57,7 +57,7 @@ const parseCookies = (cookieHeader: string | null): Record<string, string> => {
   }, {} as Record<string, string>);
 };
 
-// Get session from cookies - parse Supabase auth cookies and validate token
+// Get session from headers - first check Authorization header, then cookies
 const getSessionFromHeaders = async (headers: Headers): Promise<{ user: User } | null> => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -67,51 +67,50 @@ const getSessionFromHeaders = async (headers: Headers): Promise<{ user: User } |
     return null;
   }
   
-  const cookieHeader = headers.get("cookie");
-  const cookies = parseCookies(cookieHeader);
-  
-  // Find the Supabase auth cookie - it's named sb-<project-ref>-auth-token
-  // and can be split across multiple chunks (sb-<ref>-auth-token.0, .1, etc.)
-  const authCookieEntries = Object.entries(cookies).filter(([key]) => 
-    key.includes("-auth-token")
-  ).sort(([a], [b]) => a.localeCompare(b));
-  
-  if (authCookieEntries.length === 0) {
-    return null;
-  }
-  
-  // Combine all auth cookie chunks
-  let tokenData: string;
-  if (authCookieEntries.length === 1 && !authCookieEntries[0]![0].includes(".")) {
-    // Single cookie, not chunked
-    tokenData = authCookieEntries[0]![1];
-  } else {
-    // Multiple chunks, combine them
-    tokenData = authCookieEntries.map(([, v]) => v).join("");
-  }
-  
-  // Try to decode and parse the token
   let accessToken: string | null = null;
-  try {
-    // URL decode first
-    const decoded = decodeURIComponent(tokenData);
+  
+  // First, check Authorization header (preferred method)
+  const authHeader = headers.get("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    accessToken = authHeader.slice(7);
+    console.log("[v0] Got token from Authorization header");
+  }
+  
+  // If no Authorization header, try cookies (fallback)
+  if (!accessToken) {
+    const cookieHeader = headers.get("cookie");
+    const cookies = parseCookies(cookieHeader);
     
-    // Try base64 decode if it looks like base64
-    let jsonStr = decoded;
-    if (decoded.match(/^[A-Za-z0-9+/=]+$/)) {
+    // Find Supabase auth cookies
+    const authCookieEntries = Object.entries(cookies).filter(([key]) => 
+      key.includes("-auth-token") || key.includes("sb-")
+    ).sort(([a], [b]) => a.localeCompare(b));
+    
+    if (authCookieEntries.length > 0) {
+      // Combine all auth cookie chunks
+      let tokenData: string;
+      if (authCookieEntries.length === 1 && !authCookieEntries[0]![0].includes(".")) {
+        tokenData = authCookieEntries[0]![1];
+      } else {
+        tokenData = authCookieEntries.map(([, v]) => v).join("");
+      }
+      
       try {
-        jsonStr = Buffer.from(decoded, "base64").toString("utf-8");
+        const decoded = decodeURIComponent(tokenData);
+        let jsonStr = decoded;
+        if (decoded.match(/^[A-Za-z0-9+/=]+$/)) {
+          try {
+            jsonStr = Buffer.from(decoded, "base64").toString("utf-8");
+          } catch {
+            // Not base64
+          }
+        }
+        const parsed = JSON.parse(jsonStr);
+        accessToken = parsed.access_token || parsed[0]?.access_token;
       } catch {
-        // Not base64, use as-is
+        // Failed to parse cookie
       }
     }
-    
-    // Parse as JSON
-    const parsed = JSON.parse(jsonStr);
-    accessToken = parsed.access_token || parsed[0]?.access_token;
-  } catch {
-    // Failed to parse - might be a different format
-    return null;
   }
   
   if (!accessToken) {
