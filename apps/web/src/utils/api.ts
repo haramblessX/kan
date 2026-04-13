@@ -1,34 +1,12 @@
 import type { TRPCLink } from "@trpc/client";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { QueryClient } from "@tanstack/react-query";
 import { httpBatchLink, loggerLink } from "@trpc/client";
 import { createTRPCNext } from "@trpc/next";
 import { observable } from "@trpc/server/observable";
-import { createClient } from "@supabase/supabase-js";
 import superjson from "superjson";
 
 import type { AppRouter } from "@kan/api/root";
-
-// Singleton Supabase client for browser
-let supabaseClient: SupabaseClient | null = null;
-
-const getSupabaseClient = (): SupabaseClient | null => {
-  if (typeof window === "undefined") return null;
-  
-  if (supabaseClient) return supabaseClient;
-  
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-  
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn("[api.ts] Supabase URL or Anon Key not configured");
-    return null;
-  }
-  
-  supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
-  return supabaseClient;
-};
 
 /**
  * This is the client-side entrypoint for your tRPC API. It is used to create the `api` object which
@@ -81,27 +59,6 @@ export const api = createTRPCNext<AppRouter>({
         httpBatchLink({
           url: `${getBaseUrl()}/api/trpc`,
           transformer: superjson,
-          async headers() {
-            try {
-              const supabase = getSupabaseClient();
-              if (!supabase) return {};
-              
-              const { data: { session }, error } = await supabase.auth.getSession();
-              if (error) {
-                console.warn("[api.ts] Error getting session:", error.message);
-                return {};
-              }
-              
-              if (session?.access_token) {
-                return {
-                  Authorization: `Bearer ${session.access_token}`,
-                };
-              }
-            } catch (err) {
-              console.warn("[api.ts] Exception getting session:", err);
-            }
-            return {};
-          },
         }),
       ],
       queryClient: queryClient,

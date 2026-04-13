@@ -140,12 +140,12 @@ export const memberRouter = createTRPCRouter({
           code: "INTERNAL_SERVER_ERROR",
         });
 
-      const result = await ctx.auth.api.signInMagicLink({
+      const { status } = await ctx.auth.api.signInMagicLink({
         email: input.email,
         callbackURL: `/boards?type=invite&memberPublicId=${invite.publicId}`,
       });
 
-      if (!result.success) {
+      if (!status) {
         console.error("Failed to send magic link invitation:", {
           email: input.email,
           callbackURL: `/boards?type=invite&memberPublicId=${invite.publicId}`,

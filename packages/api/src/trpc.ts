@@ -3,12 +3,12 @@ import type { CreateNextContextOptions } from "@trpc/server/adapters/next";
 import type { NextApiRequest } from "next";
 import type { OpenApiMeta } from "trpc-to-openapi";
 import { initTRPC, TRPCError } from "@trpc/server";
-import { createClient } from "@supabase/supabase-js";
 import { env } from "next-runtime-env";
 import superjson from "superjson";
 import { ZodError } from "zod";
 
 import type { dbClient } from "@kan/db/client";
+import { initAuth } from "@kan/auth/server";
 import { createDrizzleClient } from "@kan/db/client";
 import { createLogger } from "@kan/logger";
 
@@ -46,125 +46,23 @@ export interface User {
   stripeCustomerId?: string | null | undefined;
 }
 
-// Parse cookies from header string
-const parseCookies = (cookieHeader: string | null): Record<string, string> => {
-  if (!cookieHeader) return {};
-  return cookieHeader.split(";").reduce((acc, cookie) => {
-    const [key, ...valueParts] = cookie.trim().split("=");
-    const value = valueParts.join("=");
-    if (key && value) acc[key] = value;
-    return acc;
-  }, {} as Record<string, string>);
-};
-
-// Get session from headers - first check Authorization header, then cookies
-const getSessionFromHeaders = async (headers: Headers): Promise<{ user: User } | null> => {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-  
-  if (!supabaseUrl || !supabaseAnonKey) {
-    log.warn("Supabase URL or Anon Key not configured");
-    return null;
-  }
-  
-  let accessToken: string | null = null;
-  
-  // First, check Authorization header (preferred method)
-  const authHeader = headers.get("authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    accessToken = authHeader.slice(7);
-  }
-  
-  // If no Authorization header, try cookies (fallback)
-  if (!accessToken) {
-    const cookieHeader = headers.get("cookie");
-    const cookies = parseCookies(cookieHeader);
-    
-    // Find Supabase auth cookies
-    const authCookieEntries = Object.entries(cookies).filter(([key]) => 
-      key.includes("-auth-token") || key.includes("sb-")
-    ).sort(([a], [b]) => a.localeCompare(b));
-    
-    if (authCookieEntries.length > 0) {
-      // Combine all auth cookie chunks
-      let tokenData: string;
-      if (authCookieEntries.length === 1 && !authCookieEntries[0]![0].includes(".")) {
-        tokenData = authCookieEntries[0]![1];
-      } else {
-        tokenData = authCookieEntries.map(([, v]) => v).join("");
-      }
-      
-      try {
-        const decoded = decodeURIComponent(tokenData);
-        let jsonStr = decoded;
-        if (decoded.match(/^[A-Za-z0-9+/=]+$/)) {
-          try {
-            jsonStr = Buffer.from(decoded, "base64").toString("utf-8");
-          } catch {
-            // Not base64
-          }
-        }
-        const parsed = JSON.parse(jsonStr);
-        accessToken = parsed.access_token || parsed[0]?.access_token;
-      } catch {
-        // Failed to parse cookie
-      }
-    }
-  }
-  
-  if (!accessToken) {
-    return null;
-  }
-  
-  // Create Supabase client and validate the token
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-  const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-
-  if (error || !user) {
-    if (error && !error.message.includes("session")) {
-      log.debug({ err: error }, "Supabase auth error");
-    }
-    return null;
-  }
-
-  return {
-    user: {
-      id: user.id,
-      email: user.email || "",
-      name: user.user_metadata?.name || user.email?.split("@")[0] || "",
-      emailVerified: !!user.email_confirmed_at,
-      createdAt: new Date(user.created_at),
-      updatedAt: new Date(user.updated_at || user.created_at),
-      image: user.user_metadata?.avatar_url || user.user_metadata?.picture || null,
-      stripeCustomerId: user.user_metadata?.stripeCustomerId || null,
-    },
-  };
-};
-
-// Auth API wrapper for compatibility
-const createAuthApi = (headers: Headers) => {
+const createAuthWithHeaders = (
+  auth: ReturnType<typeof initAuth>,
+  headers: Headers,
+) => {
   return {
     api: {
-      getSession: () => getSessionFromHeaders(headers),
-      signInMagicLink: async (input: { email: string; callbackURL: string }) => {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-        const supabase = createClient(supabaseUrl, supabaseAnonKey);
-        
-        const { error } = await supabase.auth.signInWithOtp({
-          email: input.email,
-          options: {
-            emailRedirectTo: input.callbackURL,
-          },
-        });
-        
-        if (error) throw error;
-        return { success: true };
-      },
-      listActiveSubscriptions: async (_input: { workspacePublicId: string }) => {
-        // Subscriptions are now handled separately
-        return [];
-      },
+      getSession: () => auth.api.getSession({ headers }),
+      signInMagicLink: (input: { email: string; callbackURL: string }) =>
+        auth.api.signInMagicLink({
+          headers,
+          body: { email: input.email, callbackURL: input.callbackURL },
+        }),
+      listActiveSubscriptions: (input: { workspacePublicId: string }) =>
+        auth.api.listActiveSubscriptions({
+          headers,
+          query: { referenceId: input.workspacePublicId },
+        }),
     },
   };
 };
@@ -172,7 +70,7 @@ const createAuthApi = (headers: Headers) => {
 interface CreateContextOptions {
   user: User | null | undefined;
   db: dbClient;
-  auth: ReturnType<typeof createAuthApi>;
+  auth: ReturnType<typeof createAuthWithHeaders>;
   headers: Headers;
   transport?: "trpc" | "rest";
 }
@@ -190,8 +88,9 @@ export const createInnerTRPCContext = (opts: CreateContextOptions) => {
 
 export const createTRPCContext = async ({ req }: CreateNextContextOptions) => {
   const db = createDrizzleClient();
+  const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
-  const auth = createAuthApi(headers);
+  const auth = createAuthWithHeaders(baseAuth, headers);
 
   const session = await auth.api.getSession();
 
@@ -206,8 +105,9 @@ export const createTRPCContext = async ({ req }: CreateNextContextOptions) => {
 
 export const createNextApiContext = async (req: NextApiRequest) => {
   const db = createDrizzleClient();
+  const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
-  const auth = createAuthApi(headers);
+  const auth = createAuthWithHeaders(baseAuth, headers);
 
   const session = await auth.api.getSession();
 
@@ -222,8 +122,9 @@ export const createNextApiContext = async (req: NextApiRequest) => {
 
 export const createRESTContext = async ({ req }: CreateNextContextOptions) => {
   const db = createDrizzleClient();
+  const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
-  const auth = createAuthApi(headers);
+  const auth = createAuthWithHeaders(baseAuth, headers);
 
   let session;
   try {

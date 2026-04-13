@@ -1,3 +1,4 @@
+import type { Subscription } from "@better-auth/stripe";
 import type Stripe from "stripe";
 
 import type { dbClient } from "@kan/db/client";
@@ -7,17 +8,6 @@ import { createLogger } from "@kan/logger";
 import { createEmailUnsubscribeLink } from "@kan/shared";
 
 const log = createLogger("auth");
-
-// Subscription type for Supabase (replaces @better-auth/stripe)
-interface Subscription {
-  id: string;
-  stripeCustomerId?: string | null;
-  status: string;
-  priceId?: string | null;
-  currentPeriodEnd?: Date | null;
-  currentPeriodStart?: Date | null;
-  cancelAtPeriodEnd?: boolean;
-}
 
 export async function downloadImage(url: string): Promise<Buffer> {
   const response = await fetch(url);
