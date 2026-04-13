@@ -1,11 +1,12 @@
 import "~/styles/globals.css";
 import "~/utils/i18n";
 
-import type { NextPage, Viewport } from "next";
+import type { NextPage } from "next";
 import type { AppProps, AppType } from "next/app";
 import type { ReactElement, ReactNode } from "react";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import Script from "next/script";
+import Head from "next/head";
 import { env } from "next-runtime-env";
 import { ThemeProvider } from "next-themes";
 import posthog from "posthog-js";
@@ -23,19 +24,6 @@ const jakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
   display: "swap",
 });
-
-export const metadata = {
-  title: "Kan",
-  description: "The open source Trello alternative",
-  icons: [{ rel: "icon", url: "/favicon.ico" }],
-};
-
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-};
 
 export type NextPageWithLayout<P = {}, IP = P> = NextPage<P, IP> & {
   getLayout?: (page: ReactElement) => ReactNode;
@@ -61,10 +49,17 @@ const MyApp: AppType = ({ Component, pageProps }: AppPropsWithLayout) => {
     }
   }, [posthogKey]);
 
+
   const getLayout = Component.getLayout ?? ((page) => page);
 
   return (
     <>
+      <Head>
+        <title>Kan - The open source Trello alternative</title>
+        <meta name="description" content="The open source Trello alternative" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+        <link rel="icon" href="/favicon.ico" />
+      </Head>
       <style jsx global>{`
         html {
           font-family: ${jakarta.style.fontFamily};
