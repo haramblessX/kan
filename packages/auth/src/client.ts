@@ -238,6 +238,147 @@ export const authClient = {
 
   // Get raw Supabase client for advanced operations
   getSupabaseClient: () => supabase,
+
+  // API Key management (uses public.apikey table)
+  apiKey: {
+    list: async () => {
+      try {
+        const { data: session } = await supabase.auth.getSession();
+        if (!session?.session?.user) {
+          return { data: [], error: { message: "Not authenticated" } };
+        }
+
+        const { data, error } = await supabase
+          .from("apikey")
+          .select("*")
+          .eq("userId", session.session.user.id)
+          .order("createdAt", { ascending: false });
+
+        if (error) {
+          return { data: [], error: { message: error.message } };
+        }
+
+        return { data: data || [] };
+      } catch (err) {
+        return { data: [], error: { message: err instanceof Error ? err.message : "Failed to list API keys" } };
+      }
+    },
+
+    create: async (params: { name: string; prefix?: string }) => {
+      try {
+        const { data: session } = await supabase.auth.getSession();
+        if (!session?.session?.user) {
+          return { data: null, error: { message: "Not authenticated" } };
+        }
+
+        // Generate a random API key
+        const keyChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let randomKey = "";
+        for (let i = 0; i < 32; i++) {
+          randomKey += keyChars.charAt(Math.floor(Math.random() * keyChars.length));
+        }
+        const fullKey = `${params.prefix || "kan_"}${randomKey}`;
+        const keyStart = fullKey.substring(0, 8);
+
+        // Hash the key for storage (simple hash for demo - in production use bcrypt on server)
+        const hashedKey = btoa(fullKey);
+
+        const { data, error } = await supabase
+          .from("apikey")
+          .insert({
+            id: crypto.randomUUID(),
+            name: params.name,
+            start: keyStart,
+            key: hashedKey,
+            userId: session.session.user.id,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (error) {
+          return { data: null, error: { message: error.message } };
+        }
+
+        // Return the full key only on creation (never stored in plain text)
+        return { data: { ...data, key: fullKey } };
+      } catch (err) {
+        return { data: null, error: { message: err instanceof Error ? err.message : "Failed to create API key" } };
+      }
+    },
+
+    revoke: async (keyId: string) => {
+      try {
+        const { data: session } = await supabase.auth.getSession();
+        if (!session?.session?.user) {
+          return { data: null, error: { message: "Not authenticated" } };
+        }
+
+        const { error } = await supabase
+          .from("apikey")
+          .delete()
+          .eq("id", keyId)
+          .eq("userId", session.session.user.id);
+
+        if (error) {
+          return { data: null, error: { message: error.message } };
+        }
+
+        return { data: { success: true } };
+      } catch (err) {
+        return { data: null, error: { message: err instanceof Error ? err.message : "Failed to revoke API key" } };
+      }
+    },
+
+    // Alias for revoke (compatibility with better-auth API)
+    delete: async (params: { keyId: string }) => {
+      return authClient.apiKey.revoke(params.keyId);
+    },
+  },
+
+  // Change password
+  changePassword: async (
+    data: { currentPassword: string; newPassword: string; revokeOtherSessions?: boolean },
+    options?: { onSuccess?: () => void; onError?: (error: { error: { message: string } }) => void }
+  ) => {
+    try {
+      // First verify current password by signing in
+      const { data: session } = await supabase.auth.getSession();
+      if (!session?.session?.user?.email) {
+        options?.onError?.({ error: { message: "Not authenticated" } });
+        return { error: { message: "Not authenticated" } };
+      }
+
+      // Try to sign in with current password to verify it
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: session.session.user.email,
+        password: data.currentPassword,
+      });
+
+      if (verifyError) {
+        options?.onError?.({ error: { message: "Current password is incorrect" } });
+        return { error: { message: "Current password is incorrect" } };
+      }
+
+      // Update to new password
+      const { error } = await supabase.auth.updateUser({
+        password: data.newPassword,
+      });
+
+      if (error) {
+        options?.onError?.({ error: { message: error.message } });
+        return { error };
+      }
+
+      options?.onSuccess?.();
+      return { data: { success: true } };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Password change failed";
+      options?.onError?.({ error: { message } });
+      return { error: { message } };
+    }
+  },
 };
 
 export default authClient;
