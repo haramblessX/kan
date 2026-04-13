@@ -1,5 +1,6 @@
 import type { TRPCLink } from "@trpc/client";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { QueryClient } from "@tanstack/react-query";
 import { httpBatchLink, loggerLink } from "@trpc/client";
 import { createTRPCNext } from "@trpc/next";
@@ -9,13 +10,24 @@ import superjson from "superjson";
 
 import type { AppRouter } from "@kan/api/root";
 
-// Create Supabase client for getting the session token
-const getSupabaseClient = () => {
+// Singleton Supabase client for browser
+let supabaseClient: SupabaseClient | null = null;
+
+const getSupabaseClient = (): SupabaseClient | null => {
   if (typeof window === "undefined") return null;
+  
+  if (supabaseClient) return supabaseClient;
+  
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-  if (!supabaseUrl || !supabaseAnonKey) return null;
-  return createClient(supabaseUrl, supabaseAnonKey);
+  
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.warn("[api.ts] Supabase URL or Anon Key not configured");
+    return null;
+  }
+  
+  supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+  return supabaseClient;
 };
 
 /**
@@ -70,14 +82,23 @@ export const api = createTRPCNext<AppRouter>({
           url: `${getBaseUrl()}/api/trpc`,
           transformer: superjson,
           async headers() {
-            const supabase = getSupabaseClient();
-            if (!supabase) return {};
-            
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session?.access_token) {
-              return {
-                Authorization: `Bearer ${session.access_token}`,
-              };
+            try {
+              const supabase = getSupabaseClient();
+              if (!supabase) return {};
+              
+              const { data: { session }, error } = await supabase.auth.getSession();
+              if (error) {
+                console.warn("[api.ts] Error getting session:", error.message);
+                return {};
+              }
+              
+              if (session?.access_token) {
+                return {
+                  Authorization: `Bearer ${session.access_token}`,
+                };
+              }
+            } catch (err) {
+              console.warn("[api.ts] Exception getting session:", err);
             }
             return {};
           },

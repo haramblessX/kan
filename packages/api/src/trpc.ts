@@ -73,7 +73,6 @@ const getSessionFromHeaders = async (headers: Headers): Promise<{ user: User } |
   const authHeader = headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
     accessToken = authHeader.slice(7);
-    console.log("[v0] Got token from Authorization header");
   }
   
   // If no Authorization header, try cookies (fallback)
