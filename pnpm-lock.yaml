@@ -323,6 +323,9 @@ importers:
       '@kan/stripe':
         specifier: workspace:^
         version: link:../stripe
+      '@supabase/supabase-js':
+        specifier: ^2.46.2
+        version: 2.103.0
       '@trpc/server':
         specifier: 'catalog:'
         version: 11.5.0(typescript@5.9.2)
